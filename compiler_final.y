@@ -7,6 +7,7 @@
     int yydebug = 1;
 
     ObjectType currentVarType;
+    int array_size= 0;
 %}
 
 /* Variable or self-defined structure */
@@ -37,6 +38,9 @@
 
 /* Nonterminal with return, which need to sepcify type */
 %type <object_val> Expression
+%type <s_var> VariableName
+%type <s_var> FunctionCreateStmt
+%type <s_var> IterationVariableName
 
 %right VAL_ASSIGN ADD_ASSIGN SUB_ASSIGN MUL_ASSIGN DIV_ASSIGN REM_ASSIGN SHR_ASSIGN SHL_ASSIGN BAN_ASSIGN BOR_ASSIGN BXO_ASSIGN 
 %left LOR
@@ -83,28 +87,44 @@ VariableList
 ;
 
 Variable
-    : IDENT VAL_ASSIGN Expression { createVariable(currentVarType, $<s_var>1, $<object_val>3.value); }
-    | IDENT { createVariable(currentVarType, $<s_var>1, 0); }
+    : VariableName { createVariable(currentVarType, $<s_var>1, 0); }
+    | VariableName VAL_ASSIGN Expression { if(currentVarType != OBJECT_TYPE_AUTO)createVariable(currentVarType, $<s_var>1, 0);else createAutoVariable(currentVarType, $<s_var>1, &$<object_val>3); }
+    | IterationVariableName ':' Expression { if(currentVarType != OBJECT_TYPE_AUTO)createIterationVariable(currentVarType, $<s_var>1, 0);else createAutoIterationVariable(currentVarType, $<s_var>1, &$<object_val>3); } 
 ;
+
+IterationVariableName
+    : IDENT { $$ = $<s_var>1; printIterationVariable($<s_var>1); }
+;
+
+VariableName
+    : VariableName '[' INT_LIT { printf("INT_LIT %d\n", $<i_var>3); } ']' { $$ = $<s_var>1; }
+    | VariableName '[' ']' { $$ = $<s_var>1; }
+    | IDENT { $$ = $<s_var>1; }
 
 /* Function */
 FunctionDefStmt
-    : VARIABLE_T IDENT { createFunction($<var_type>1, $<s_var>2); } '(' FunctionParameterStmtList ')' '{' StmtList '}' { dumpScope(); }
+    : FunctionCreateStmt '(' FunctionParameterStmtList ')' { addReturnType($<var_type>1); } '{' StmtList '}' { dumpScope(); }
 ;
+
 FunctionParameterStmtList 
     : FunctionParameterStmtList ',' FunctionParameterStmt
     | FunctionParameterStmt
 ;
+
 FunctionParameterStmt
     : VARIABLE_T IDENT { pushFunParm($<var_type>1, $<s_var>2, VAR_FLAG_DEFAULT); }
     | VARIABLE_T IDENT '[' INT_LIT ']' { pushFunParm($<var_type>1, $<s_var>2, $<i_var>3); }
     | VARIABLE_T IDENT '[' ']' { pushFunParm($<var_type>1, $<s_var>2, -1); }
 ;
 
+FunctionCreateStmt
+    : VARIABLE_T IDENT { createFunction($<var_type>1, $<s_var>2); $$ = $<s_var>1; }
+
 Expression
     : '(' Expression ')' { $$ = $<object_val>2; }
     | '(' VARIABLE_T ')' Expression %prec CAST { objectCast($<var_type>2, &$<object_val>4, &$$); }
-    | IDENT '(' InputExprList ')' { Object *function = findVariable($<s_var>1); if(function != NULL)printFunc(function); }
+    | { array_size=0; } '{' InputExprList '}' { printf("create array: %d\n", array_size); }
+    | IDENT '(' InputExprList ')' { printf("IDENT (name=%s, address=-1)\n", $<s_var>1); Object *function = findVariable($<s_var>1); if(function != NULL){  $$ = (Object){ .type=funcReturn(function), .symbol=function->symbol};printFunc(function); } }
     | Expression ADD Expression { if(objectExpBinary('+', &$<object_val>1, &$<object_val>3, &$$))printf("ADD\n"); }
     | Expression SUB Expression { if(objectExpBinary('-', &$<object_val>1, &$<object_val>3, &$$))printf("SUB\n"); }
     | Expression MUL Expression { if(objectExpBinary('*', &$<object_val>1, &$<object_val>3, &$$))printf("MUL\n"); }
@@ -143,7 +163,7 @@ Expression
     | INT_LIT { printf("INT_LIT %d\n", $<i_var>1); $$ = (Object){ .type=OBJECT_TYPE_INT, .value=$<i_var>1, .symbol=NULL}; }
     | FLOAT_LIT { printf("FLOAT_LIT %f\n", $<f_var>1); $$ = (Object){ .type=OBJECT_TYPE_FLOAT, .value=$<f_var>1, .symbol=NULL }; }
     | BOOL_LIT { printf("BOOL_LIT %s\n", $<b_var>1>0?"TRUE":"FALSE"); $$ = (Object){ .type=OBJECT_TYPE_BOOL, .value=$<b_var>1, .symbol=NULL }; }
-    | IDENT { 
+    | IDENT  ArrayList { 
         if(strcmp($<s_var>1, "endl") == 0){ printf("IDENT (name=%s, address=-1)\n", $<s_var>1); $$ = (Object){ .type=OBJECT_TYPE_STR, .symbol=NULL}; }
         else{
             Object* object = findVariable($<s_var>1);
@@ -153,23 +173,49 @@ Expression
             }
         }
     }
+    | BREAK { printf("BREAK\n"); }
+    | CONTINUE { printf("CONTINUE\n"); } 
 ;
 
 InputExprList
-    : InputExpr ',' InputExprList
+    : InputNumExpr ',' InputExprList { array_size++; }
+    | InputNumExpr { array_size++; }
+    |
+;
+
+InputNumExpr
+    : SUB InputExpr { printf("NEG\n"); }
     | InputExpr
+
+ArrayList
+    : Array ArrayList
+    | Array
+;
+
+Array
+    : '['InputExpr']'
+    |
 ;
 
 InputExpr
-    : INT_LIT
-    | FLOAT_LIT
-    | STR_LIT
-    | BOOL_LIT
-    | IDENT
+    : INT_LIT { printf("INT_LIT %d\n", $<i_var>1); }
+    | FLOAT_LIT { printf("FLOAT_LIT %f\n", $<f_var>1); }
+    | STR_LIT { printf("STR_LIT \"%s\"\n", $<s_var>1); }
+    | BOOL_LIT { printf("BOOL_LIT %s\n", $<b_var>1>0?"TRUE":"FALSE"); }
+    | IDENT { 
+        if(strcmp($<s_var>1, "endl") == 0){ printf("IDENT (name=%s, address=-1)\n", $<s_var>1); }
+        else{
+            Object *object = findVariable($<s_var>1);
+            if(object){
+                printf("IDENT (name=%s, address=%ld)\n", $<s_var>1, object->symbol->addr);
+            }
+        }
+    }
 ;
 
 IfStmt
     : IF '(' Expression ')' {  printf("IF\n");pushScope(); } '{' StmtList '}' { dumpScope(); }
+    | IF '(' Expression ')' {  printf("IF\n"); } Stmt
     | ELSE { printf("ELSE\n");pushScope(); } '{' StmtList '}' { dumpScope(); }
 ;
 
@@ -178,8 +224,12 @@ WhileStmt
 ;
 
 ForStmt
-    : FOR { printf("FOR\n"); pushScope(); } '(' ForDefStmt ';' ForExpr ';' ForExpr ')' '{' StmtList '}' { dumpScope(); }
+    : FOR { printf("FOR\n"); pushScope(); } '(' ForDeclare ')' '{' StmtList '}' { dumpScope(); }
 ;
+
+ForDeclare
+    : ForDefStmt ';' ForExpr ';' ForExpr
+    | ForDefStmt
 
 ForExpr
     :   Expression
@@ -204,6 +254,7 @@ Stmt
     | DefineVariableStmt 
     | { stdoutClear(); } COUT CoutParmListStmt ';' { stdoutPrint(); }
     | RETURN Expression ';' { printf("RETURN\n"); }
+    | RETURN ';' { printf("RETURN\n"); }
 ;
 
 CoutParmListStmt

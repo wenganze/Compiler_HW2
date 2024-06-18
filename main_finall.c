@@ -24,7 +24,12 @@ const char* funcSigName[] = {
     [OBJECT_TYPE_INT] = "I",
     [OBJECT_TYPE_FLOAT] = "F",
     [OBJECT_TYPE_LONG] = "L",
-    [OBJECT_TYPE_STR] = "Ljava/lang/String;"
+    [OBJECT_TYPE_STR] = "Ljava/lang/String;",
+    [OBJECT_TYPE_VOID] = "V"
+};
+
+const ObjectType funcReutrnType[]={
+    ['I'] = OBJECT_TYPE_INT
 };
 
 struct symbolTable{
@@ -86,18 +91,21 @@ void pushScope() {
     }
 }
 
+ObjectType funcReturn(Object *func){
+    if(func->symbol != NULL){
+        if(func->symbol->func_sig != NULL){
+            if(func->symbol->func_sig[strlen(func->symbol->func_sig)-1] == 'I'){
+                return funcReutrnType['I'];
+            }
+        }
+    }
+}
+
 void dumpScope() {
     printf("\n> Dump symbol table (scope level: %d)\n", scopeLevel);
     printf("Index     Name                Type      Addr      Lineno    Func_sig  \n");
     for(int i = 0;i < nowSymbolTable->size;i++){
         Object *object = &nowSymbolTable->layer[i];
-        if (object->type == OBJECT_TYPE_FUNCTION) {
-            char *new_func_sig = malloc(strlen(object->symbol->func_sig)+1);
-            strcpy(new_func_sig,"(");
-            strcat(new_func_sig, object->symbol->func_sig);
-            free(object->symbol->func_sig);
-            object->symbol->func_sig = new_func_sig;
-        }
         printf("%-10d%-20s%-10s%-10ld%-10d%-10s\n",
             object->symbol->index,
             object->symbol->name,
@@ -111,6 +119,7 @@ void dumpScope() {
         struct symbolTable *deletesymbolTable = nowSymbolTable;
         nowSymbolTable->preLayer->nextLayer = NULL;
         nowSymbolTable = nowSymbolTable->preLayer;
+        free(deletesymbolTable);
     }else nowSymbolTable = NULL;
     scopeLevel--;
     
@@ -130,10 +139,70 @@ Object* createVariable(ObjectType variableType, char* variableName, int variable
         .lineno = yylineno,
         .index = nowSymbolTable->size,
     };
-    
+
     appendToNowSymbolTable(nowSymbolTable, variable);
     variableAddress++;
     return &nowSymbolTable->layer[nowSymbolTable->size-1];
+}
+
+Object* createAutoVariable(ObjectType variableType, char* variableName, Object* variableFlag) {
+    printf("> Insert `%s` (addr: %d) to scope level %d\n", variableName, variableAddress, scopeLevel);
+
+    Object variable = (Object){
+        .type = variableFlag->type,
+        .symbol = (SymbolData*)malloc(sizeof(SymbolData)),
+        .value = variableFlag
+    };
+    *variable.symbol = (SymbolData){
+        .addr = variableAddress,
+        .name = variableName, 
+        .lineno = yylineno,
+        .index = nowSymbolTable->size,
+    };
+
+    appendToNowSymbolTable(nowSymbolTable, variable);
+    variableAddress++;
+    return &nowSymbolTable->layer[nowSymbolTable->size-1];
+}
+
+Object* createIterationVariable(ObjectType variableType, char* variableName, int variableFlag) {
+    Object variable = (Object){
+        .type = variableType,
+        .symbol = (SymbolData*)malloc(sizeof(SymbolData)),
+        .value = variableFlag
+    };
+    *variable.symbol = (SymbolData){
+        .addr = variableAddress,
+        .name = variableName, 
+        .lineno = yylineno,
+        .index = nowSymbolTable->size,
+    };
+
+    appendToNowSymbolTable(nowSymbolTable, variable);
+    variableAddress++;
+    return &nowSymbolTable->layer[nowSymbolTable->size-1];
+}
+
+Object* createAutoIterationVariable(ObjectType variableType, char* variableName, Object* variableFlag) {
+    Object variable = (Object){
+        .type = variableFlag->type,
+        .symbol = (SymbolData*)malloc(sizeof(SymbolData)),
+        .value = variableFlag
+    };
+    *variable.symbol = (SymbolData){
+        .addr = variableAddress,
+        .name = variableName, 
+        .lineno = yylineno,
+        .index = nowSymbolTable->size,
+    };
+
+    appendToNowSymbolTable(nowSymbolTable, variable);
+    variableAddress++;
+    return &nowSymbolTable->layer[nowSymbolTable->size-1];
+}
+
+void printIterationVariable(char *variableName) {
+    printf("> Insert `%s` (addr: %d) to scope level %d\n", variableName, variableAddress, scopeLevel);
 }
 
 void pushFunParm(ObjectType variableType, char* variableName, int variableFlag) {
@@ -144,10 +213,9 @@ void pushFunParm(ObjectType variableType, char* variableName, int variableFlag) 
     size_t funcSigSize = strlen(func_sig) + strlen(funcSigName[variableType]) + 1;
     if(variableFlag == -1)funcSigSize++;
     char *new_func_sig = (char*)malloc(funcSigSize);
-    strcpy(new_func_sig, "");
+    strcpy(new_func_sig, func_sig);
     if(variableFlag == -1)strcat(new_func_sig,"[");
     strcat(new_func_sig, funcSigName[variableType]);
-    strcat(new_func_sig, func_sig);
     nowSymbolTable->preLayer->layer[nowSymbolTable->preLayer->size-1].symbol->func_sig = new_func_sig;
     
     Object parm = (Object){
@@ -166,7 +234,10 @@ void pushFunParm(ObjectType variableType, char* variableName, int variableFlag) 
 }
 
 void printFunc(Object *function){
-    printf("call: %s%s", objectTypeName[function->type], function->symbol->func_sig);
+    /*if(function->symbol != NULL) printf("good");
+    if(function->symbol->name != NULL) printf("nameNotNULL");
+    if(function->symbol->func_sig != NULL) printf("func_sigNotNULLL");*/
+    printf("call: %s%s\n", function->symbol->name, function->symbol->func_sig);
 }
 
 void createFunction(ObjectType variableType, char* funcName) {
@@ -174,9 +245,8 @@ void createFunction(ObjectType variableType, char* funcName) {
     printf("func: %s\n", funcName);
     printf("> Insert `%s` (addr: -1) to scope level %d\n", funcName, scopeLevel);
 
-    char *func_sig = (char*)malloc(sizeof(char)+sizeof(funcSigName[variableType]));
-    strcpy(func_sig, ")");
-    strcat(func_sig, funcSigName[variableType]);
+    char *func_sig = (char*)malloc(sizeof(char));
+    strcpy(func_sig, "");
 
     Object funcInfo;
     funcInfo = (Object){
@@ -207,6 +277,17 @@ void createFunction(ObjectType variableType, char* funcName) {
     printf("> Create symbol table (scope level %d)\n", scopeLevel);
 }
 
+void addReturnType(ObjectType func){
+    char *func_sig = nowSymbolTable->preLayer->layer[nowSymbolTable->preLayer->size-1].symbol->func_sig;
+    size_t funcSigSize = strlen(func_sig) + strlen(funcSigName[func]) + 3;
+    char *new_func_sig = (char*)malloc(funcSigSize);
+    strcpy(new_func_sig, "(");
+    strcat(new_func_sig,func_sig);
+    strcat(new_func_sig,")");
+    strcat(new_func_sig, funcSigName[func]);
+    nowSymbolTable->preLayer->layer[nowSymbolTable->preLayer->size-1].symbol->func_sig = new_func_sig;
+}
+
 void debugPrintInst(char instc, Object* a, Object* b, Object* out) {
 }
 
@@ -233,16 +314,12 @@ bool objectExpBinary(char op, Object* a, Object* b, Object* out) {
            (b->type == OBJECT_TYPE_INT || b->type == OBJECT_TYPE_FLOAT || b->type == OBJECT_TYPE_BOOL || a->type == OBJECT_TYPE_DOUBLE)){
             if(a->type == OBJECT_TYPE_FLOAT || b->type == OBJECT_TYPE_FLOAT) *out = (Object){ .type=OBJECT_TYPE_FLOAT, .symbol=NULL};
             else *out = (Object){ .type=OBJECT_TYPE_INT, .symbol=NULL };
-            if(op == '+') out->value = a->value + b->value;
-            if(op == '-') out->value = a->value - b->value;
-            if(op == '*') out->value = a->value * b->value;
-            if(op == '/') out->value = a->value / b->value;
             return true;
         }
     }
     if(op == '%'){
         if((a->type == OBJECT_TYPE_INT ||b->type == OBJECT_TYPE_BOOL) && (a->type == OBJECT_TYPE_INT || b->type == OBJECT_TYPE_BOOL)){
-            *out = (Object){ .type=OBJECT_TYPE_INT, .symbol=NULL, .value=a->value%b->value };
+            *out = (Object){ .type=OBJECT_TYPE_INT, .symbol=NULL };
             return true;
         }
     }
